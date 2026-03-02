@@ -1,0 +1,18 @@
+---
+- name: End booking - optionally save state, then destroy EVE VM
+  hosts: localhost
+  gather_facts: false
+  vars:
+    booking_id: "{{ booking_id }}"
+    save_state: "{{ save_state | default(false) | bool }}"
+    tf_dir: "terraform/vsphere-eve"
+    state_root: "state"
+  tasks:
+    - name: Optionally run save_state play
+      when: save_state
+      import_playbook: save_state.yml
+
+    - name: Terraform destroy
+      command: terraform destroy -auto-approve -input=false
+      args:
+        chdir: "{{ tf_dir }}"

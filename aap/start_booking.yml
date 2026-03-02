@@ -1,0 +1,66 @@
+---
+- name: Start booking - provision EVE, deploy topology, optionally restore state
+  hosts: localhost
+  gather_facts: false
+  vars:
+    booking_id: "{{ booking_id }}"
+    topology_file: "{{ topology_file | default('topologies/sdwan.yml') }}"
+    restore_state: "{{ restore_state | default(false) | bool }}"
+    tf_dir: "terraform/vsphere-eve"
+    state_root: "state"
+  tasks:
+    - name: Terraform init
+      command: terraform init -input=false
+      args:
+        chdir: "{{ tf_dir }}"
+
+    - name: Terraform apply
+      command: terraform apply -auto-approve -input=false
+      args:
+        chdir: "{{ tf_dir }}"
+
+    - name: Get Terraform outputs
+      command: terraform output -json
+      args:
+        chdir: "{{ tf_dir }}"
+      register: tf_out
+
+    - name: Set EVE IP fact (may be empty depending on guest tools)
+      set_fact:
+        eve_ip_from_tf: "{{ (tf_out.stdout | from_json).eve_ip.value | default('') }}"
+
+    - name: Pick EVE IP (prefer explicit eve_ip if provided)
+      set_fact:
+        eve_ip_effective: "{{ (eve_ip | default('') | length > 0) | ternary(eve_ip, eve_ip_from_tf) }}"
+
+    - name: Fail if EVE IP not available
+      when: eve_ip_effective | length == 0
+      fail:
+        msg: >
+          No EVE IP available. Provide 'eve_ip' from booking system or implement reliable IP discovery
+          (DHCP reservation/DNS or vCenter lookup).
+
+    - name: Wait for EVE web/API port
+      wait_for:
+        host: "{{ eve_ip_effective }}"
+        port: 80
+        timeout: 600
+
+    - name: Deploy topology into EVE
+      command: >
+        python3 scripts/deploy_topology.py
+        --eve {{ eve_ip_effective }}
+        --topology {{ topology_file }}
+        --lab-name {{ booking_id }}
+
+    - name: Check if saved state exists for this booking_id
+      delegate_to: localhost
+      stat:
+        path: "{{ state_root }}/{{ booking_id }}"
+      register: state_dir
+
+    - name: Run restore_state play if requested and state exists
+      when: restore_state and state_dir.stat.exists
+      vars:
+        target_eve_ip: "{{ eve_ip_effective }}"
+      import_playbook: restore_state.yml

@@ -1,0 +1,5 @@
+provider: eve-ng
+
+nodes:
+  hello-router:
+    device: iosv

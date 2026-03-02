@@ -1,0 +1,52 @@
+---
+- name: Save device configs from lab (IOS/IOS-XE example)
+  hosts: lab_devices
+  gather_facts: false
+  vars:
+    booking_id: "{{ booking_id }}"
+    state_root: "{{ state_root | default('state') }}"
+    state_dir: "{{ state_root }}/{{ booking_id }}"
+  tasks:
+    - name: Create local state dir
+      delegate_to: localhost
+      file:
+        path: "{{ state_dir }}"
+        state: directory
+        mode: "0750"
+
+    - name: Get running-config
+      cisco.ios.ios_command:
+        commands:
+          - show running-config
+      register: run_cfg
+
+    - name: Write running-config to file
+      delegate_to: localhost
+      copy:
+        dest: "{{ state_dir }}/{{ inventory_hostname }}.running.cfg"
+        content: "{{ run_cfg.stdout[0] }}"
+
+    - name: Get startup-config (best effort)
+      cisco.ios.ios_command:
+        commands:
+          - show startup-config
+      register: start_cfg
+      failed_when: false
+
+    - name: Write startup-config to file (if available)
+      when: start_cfg.stdout is defined and start_cfg.stdout|length > 0
+      delegate_to: localhost
+      copy:
+        dest: "{{ state_dir }}/{{ inventory_hostname }}.startup.cfg"
+        content: "{{ start_cfg.stdout[0] }}"
+
+    - name: Write manifest.json
+      delegate_to: localhost
+      copy:
+        dest: "{{ state_dir }}/manifest.json"
+        content: |
+          {
+            "booking_id": "{{ booking_id }}",
+            "saved_at": "{{ lookup('pipe','date -u +%Y-%m-%dT%H:%M:%SZ') }}",
+            "devices": {{ (groups['lab_devices'] | default([])) | to_json }}
+          }
